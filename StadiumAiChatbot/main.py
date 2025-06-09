@@ -10,12 +10,20 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from sklearn.metrics.pairwise import cosine_similarity
 from langdetect import detect
+import psycopg2
 
 # === Models ===
 emmb_model = SentenceTransformer("all-MiniLM-L6-v2")  # For embeddings
 gen_tokenizer = AutoTokenizer.from_pretrained("tiiuae/falcon-7b-instruct")
 gen_model = AutoModelForCausalLM.from_pretrained(
     "tiiuae/falcon-7b-instruct", torch_dtype=torch.float16, device_map="auto"
+)
+conn = psycopg2.connect(
+    dbname="mydatabase",
+    user="postgres",
+    password="01021913496",
+    host="db",
+    port="5432"
 )
 
 # === System FAQ Knowledge Base ===
@@ -102,17 +110,27 @@ conn = sqlite3.connect("facilities.db", check_same_thread=False)
 class Question(BaseModel):
     question: str
 
-# # === DB Setup ===
-# def create_example_db():
-#     cur = conn.cursor()
-#     cur.execute('''CREATE TABLE IF NOT EXISTS facilities (
-#         id INTEGER PRIMARY KEY AUTOINCREMENT,
-#         name TEXT, sport TEXT, city TEXT, area TEXT, description TEXT)''')
-#     cur.execute("INSERT INTO facilities (name, sport, city, area, description) VALUES (?, ?, ?, ?, ?)",
-#                 ("Cairo Football Club", "Football", "Cairo", "Nasr City", "A great place for 11-a-side football matches."))
-#     cur.execute("INSERT INTO facilities (name, sport, city, area, description) VALUES (?, ?, ?, ?, ?)",
-#                 ("Zamalek Sports Center", "Tennis", "Cairo", "Zamalek", "Tennis courts available for booking"))
-#     conn.commit()
+# # # === DB Setup ===
+def create_example_db():
+    cur = conn.cursor()
+    cur.execute('''CREATE TABLE IF NOT EXISTS facilities (
+        id SERIAL PRIMARY KEY,
+        name TEXT,
+        sport TEXT,
+        city TEXT,
+        area TEXT,
+        description TEXT
+    )''')
+
+    # Clear existing data
+    cur.execute("DELETE FROM facilities")
+
+    # Insert new example data
+    cur.execute("INSERT INTO facilities (name, sport, city, area, description) VALUES (%s, %s, %s, %s, %s)",
+                ("Cairo Football Club", "Football", "Cairo", "Nasr City", "A great place for 11-a-side football matches."))
+    cur.execute("INSERT INTO facilities (name, sport, city, area, description) VALUES (%s, %s, %s, %s, %s)",
+                ("Zamalek Sports Center", "Tennis", "Cairo", "Zamalek", "Tennis courts available for booking"))
+    conn.commit()
 
 # === Data for FAISS ===
 def get_data_from_db():
@@ -276,7 +294,7 @@ def ask(query: Question):
 @app.get("/api/facilities/{facility_id}")
 def get_facility(facility_id: int):
     cur = conn.cursor()
-    cur.execute("SELECT * FROM facilities WHERE id = ?", (facility_id,))
+    cur.execute("SELECT * FROM facilities WHERE id = %s", (facility_id,))
     row = cur.fetchone()
     if not row:
         return {"error": "Facility not found"}
@@ -284,7 +302,6 @@ def get_facility(facility_id: int):
         "id": row[0], "name": row[1], "sport": row[2],
         "city": row[3], "area": row[4], "description": row[5]
     }
-
 # === INIT: create db + FAISS ===
 create_example_db()
 create_faiss_index()
